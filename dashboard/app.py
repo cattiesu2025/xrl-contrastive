@@ -10,8 +10,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import plotly.graph_objects as go
 
 from agents.configs import PROFILES, REWARD_CHANNELS
 from agents.train import load_agent, evaluate_agent, greedy_trajectory
@@ -85,6 +87,48 @@ def draw_grid(env, path=None, title="", ax=None):
     return ax
 
 
+def trajectory_positions(agents):
+    """Union of grid positions visited on each agent's greedy trajectory."""
+    pos = set()
+    for ag in agents.values():
+        traj = greedy_trajectory(ag["model"], ag["weights"])
+        pos.update(tuple(p) for p in traj["positions"])
+    return pos
+
+
+def build_clickable_grid(env, on_path):
+    """Plotly grid: heatmap for cell colours + a transparent full-grid scatter that
+    is clickable (on-path cells get a dark ring). Click returns (x=col, y=row)."""
+    G = env.GRID_SIZE
+    z = [[0] * G for _ in range(G)]
+    for r, c in env.HAZARDS:
+        z[r][c] = 1
+    for r, c in env.RESOURCES:
+        z[r][c] = 2
+    z[env.START[0]][env.START[1]] = 3
+    z[env.GOAL[0]][env.GOAL[1]] = 4
+    colorscale = [
+        [0.0, "#ecf0f1"], [0.2, "#ecf0f1"],
+        [0.2, "#e74c3c"], [0.4, "#e74c3c"],
+        [0.4, "#f1c40f"], [0.6, "#f1c40f"],
+        [0.6, "#3498db"], [0.8, "#3498db"],
+        [0.8, "#27ae60"], [1.0, "#27ae60"],
+    ]
+    fig = go.Figure(go.Heatmap(z=z, colorscale=colorscale, zmin=0, zmax=4,
+                               showscale=False, xgap=1, ygap=1, hoverinfo="skip"))
+    cells = [(r, c) for r in range(G) for c in range(G)]
+    fig.add_trace(go.Scatter(
+        x=[c for r, c in cells], y=[r for r, c in cells], mode="markers",
+        marker=dict(size=22, color="rgba(0,0,0,0)",
+                    line=dict(color="#2c3e50",
+                              width=[2 if (r, c) in on_path else 0 for r, c in cells])),
+        hovertemplate="row=%{y}, col=%{x}<extra></extra>", showlegend=False))
+    fig.update_yaxes(autorange="reversed", title="row")
+    fig.update_xaxes(title="col")
+    fig.update_layout(height=440, margin=dict(l=10, r=10, t=10, b=10))
+    return fig
+
+
 # ---- App ----
 
 def main():
@@ -96,7 +140,8 @@ def main():
         st.error("No trained agents found. Run `python -m experiments.run_all --phase train` first.")
         return
 
-    tabs = st.tabs(["Trajectories", "Q-Decomposition", "Contrastive", "TCAV"])
+    tabs = st.tabs(["Trajectories", "Q-Decomposition", "Contrastive", "TCAV",
+                    "Explore (click a cell)"])
 
     # ---- Tab 1: Trajectory comparison ----
     with tabs[0]:
@@ -204,6 +249,47 @@ def main():
             ax.set_title("TCAV scores (> 0.5 = concept positively influences Q)")
             st.pyplot(fig)
             plt.close()
+
+    # ---- Tab 5: Interactive explore ----
+    with tabs[4]:
+        st.subheader("Click a cell to compare all agents at that state")
+        st.caption("Circled cells lie on an agent's greedy path (in-distribution). "
+                   "Resource collection is fixed to *none collected* (collected=0).")
+        env = MultiObjGridEnv()
+        on_path = trajectory_positions(agents)
+        event = st.plotly_chart(build_clickable_grid(env, on_path),
+                                on_select="rerun", selection_mode="points", key="explore_grid")
+
+        pts = []
+        if event and getattr(event, "selection", None):
+            pts = event.selection.get("points", []) if isinstance(event.selection, dict) \
+                else getattr(event.selection, "points", [])
+        if not pts:
+            st.info("Click any open cell above.")
+        else:
+            col, row = int(round(pts[0]["x"])), int(round(pts[0]["y"]))
+            st.markdown(f"**Selected (row, col) = ({row}, {col})**")
+            if (row, col) in env.HAZARDS or (row, col) == env.GOAL:
+                st.warning("Terminal cell (hazard/goal) — agents take no action here.")
+            else:
+                if (row, col) not in on_path:
+                    st.warning("⚠️ Off-path: no agent visits this cell on its greedy route, "
+                               "so the Q-values here are off-distribution and may be unreliable.")
+                state = env.features_from_pos(row, col, 0)
+                rows = []
+                for ag in agents.values():
+                    d = decompose_state(ag["model"], state, ag["weights"])
+                    contribs = d["greedy_channel_contributions"]
+                    rows.append({
+                        "agent": ag["name"],
+                        "action": MultiObjGridEnv.ACTION_NAMES[d["greedy_action"]],
+                        "dominant": max(contribs, key=lambda k: contribs[k]),
+                        **{f"Q_{ch}": round(contribs[ch], 2) for ch in REWARD_CHANNELS},
+                    })
+                st.dataframe(pd.DataFrame(rows), hide_index=True)
+                actions = {r["action"] for r in rows}
+                st.caption("All three agree." if len(actions) == 1
+                           else f"Agents disagree: {', '.join(sorted(actions))}.")
 
 
 if __name__ == "__main__":

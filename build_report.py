@@ -127,17 +127,37 @@ for key, ag in agents.items():
 
 md("""### 4.2 Contrastive explanations
 
-Where two agents pick different actions, we explain the divergence in terms of
-the dominant channel of each. There are hundreds of such disagreement states;
-a few examples for safety-first vs speed-first:
+We compare agents at states **on their actual greedy trajectories** (the union of
+both paths), so every comparison is at a reachable, in-distribution state — not a
+random, possibly-unreachable cell where the Q-values would be unreliable. At a
+state on agent A's path, agent B's action is a counterfactual ("what would B do
+here?"), and vice versa.
+
+**Honest finding:** on their real paths all three agents are *goal-driven* and
+differ mainly in **route** — α threads a different corridor, while β and γ are
+nearly identical (only a couple of disagreements). The "safety-first vs
+speed-first" personality lives in the reward weights and in counterfactual
+reactions to hazards the agents never actually approach on an optimal path — not
+in the deployed trajectory. This is itself a finding: three competent
+multi-objective agents with different weights converge to behaviourally similar
+optimal policies; the personality shows up more in representation (TCAV) and
+counterfactuals than in the path taken.
+
+All three pairwise comparisons (first two on-path disagreements each):
+
+*For interactive per-state exploration of all three agents at once, run the
+dashboard:* `streamlit run dashboard/app.py`.
 """)
 
-code("""from xai.contrastive import find_disagreement_states, generate_explanation
-a, b = agents["safety_first"], agents["speed_first"]
-dis = find_disagreement_states(a["model"], a["weights"], b["model"], b["weights"])
-print(f"Found {len(dis)} disagreement states.\\n")
-for d in dis[:3]:
-    print(generate_explanation(d, a["name"], b["name"])); print()""")
+code("""from xai.contrastive import find_trajectory_disagreements, generate_explanation
+import itertools
+for ka, kb in itertools.combinations(list(agents), 2):
+    a, b = agents[ka], agents[kb]
+    dis = find_trajectory_disagreements(a["model"], a["weights"], b["model"], b["weights"])
+    print(f"=== {a['name']} vs {b['name']}: {len(dis)} on-path disagreements ===")
+    for d in dis[:2]:
+        print(generate_explanation(d, a["name"], b["name"])); print()
+    print()""")
 
 md("""### 4.3 TCAV concept attribution — baseline vs per-channel
 

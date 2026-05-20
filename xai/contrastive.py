@@ -58,6 +58,61 @@ def find_disagreement_states(
     return disagreements
 
 
+def _greedy_path_states(model, weights, max_steps=200):
+    """Reachable states along a model's greedy trajectory: (features, pos, collected)."""
+    env = MultiObjGridEnv(seed=0)
+    obs = env.reset()
+    out, visited = [], set()
+    for _ in range(max_steps):
+        out.append((obs.copy(), (env.row, env.col), env.collected))
+        idx = env.encode(env.row, env.col, env.collected)
+        if idx in visited:
+            break
+        visited.add(idx)
+        action = decompose_state(model, obs, weights)["greedy_action"]
+        obs, _, done, _ = env.step(action)
+        if done:
+            out.append((obs.copy(), (env.row, env.col), env.collected))
+            break
+    return out
+
+
+def find_trajectory_disagreements(
+    model_a: DecomposedDQN,
+    weights_a: list[float],
+    model_b: DecomposedDQN,
+    weights_b: list[float],
+    max_steps: int = 200,
+) -> list[dict]:
+    """Disagreements over the UNION of both agents' greedy trajectories.
+
+    Unlike find_disagreement_states (random — possibly unreachable — states),
+    every candidate here is a state at least one agent actually reaches on its
+    greedy path, so the collected bitmask is valid and the Q-values are
+    in-distribution. At a state on A's path, B's action is a counterfactual
+    ("what would B do here?") and vice versa.
+    """
+    env = MultiObjGridEnv()
+    seen = {}  # encoded state -> (features, pos, collected)
+    for model, weights in ((model_a, weights_a), (model_b, weights_b)):
+        for feats, pos, collected in _greedy_path_states(model, weights, max_steps):
+            if pos in env.HAZARDS or pos == env.GOAL:
+                continue
+            seen[env.encode(pos[0], pos[1], collected)] = (feats, pos, collected)
+
+    disagreements = []
+    for feats, pos, collected in seen.values():
+        da = decompose_state(model_a, feats, weights_a)
+        db = decompose_state(model_b, feats, weights_b)
+        if da["greedy_action"] != db["greedy_action"]:
+            disagreements.append({
+                "state": feats, "position": pos, "collected": collected,
+                "action_a": da["greedy_action"], "action_b": db["greedy_action"],
+                "decomp_a": da, "decomp_b": db,
+            })
+    return disagreements
+
+
 def _cell_label(row: int, col: int, env: MultiObjGridEnv) -> str:
     """Return a short human-readable label for a grid cell."""
     pos = (row, col)
@@ -166,10 +221,19 @@ def generate_explanation(
     sent_a = _agent_sentence(name_a, disagreement["action_a"], row, col, decomp_a, env)
     sent_b = _agent_sentence(name_b, disagreement["action_b"], row, col, decomp_b, env)
 
-    contrast = _CONTRAST_TEMPLATES.get(
-        (dominant_a, dominant_b),
-        f"{name_a} is driven by {dominant_a}, while {name_b} is driven by {dominant_b}.",
-    ).format(a=name_a, b=name_b)
+    if dominant_a == dominant_b:
+        # Same dominant channel → they share the objective but disagree on the route.
+        act_a = MultiObjGridEnv.ACTION_NAMES[disagreement["action_a"]].lower()
+        act_b = MultiObjGridEnv.ACTION_NAMES[disagreement["action_b"]].lower()
+        contrast = (
+            f"Both prioritise {dominant_a} here but take different routes — "
+            f"{name_a} goes {act_a}, {name_b} goes {act_b}."
+        )
+    else:
+        contrast = _CONTRAST_TEMPLATES.get(
+            (dominant_a, dominant_b),
+            f"{name_a} is driven by {dominant_a}, while {name_b} is driven by {dominant_b}.",
+        ).format(a=name_a, b=name_b)
 
     return "\n".join([
         f"At position ({row},{col}):",

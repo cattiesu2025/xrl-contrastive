@@ -26,21 +26,35 @@ TCAV × reward-decomposition contribution.
 
 For each (agent, channel `c`, concept):
 
+**REVISION (during implementation):** the cosine-mean below was implemented and
+empirically discarded. In the 64-dim feature space `g` and the CAV are nearly
+orthogonal, so per-state cosines are tiny and their mean washes out to ~0 (all
+agents/pairs landed in [-0.09, +0.13] — no usable signal). The **sign of the
+directional derivative** is the stable signal — exactly why standard TCAV counts
+a sign fraction. Final metric used:
+
 ```
 for each concept state s:
     features = encoder(s)
-    q_c      = head_c(features)[greedy_action]   # single channel head, not total
-    g        = ∂q_c / ∂features
-    d(s)     = cos(g, CAV) = (g·CAV) / (‖g‖·‖CAV‖)   # signed, ∈ [-1, 1]
-sensitivity = mean_s d(s)                              # ∈ [-1, 1]
+    g        = ∂( max_a Q_channel(s, a) ) / ∂features   # channel's OWN best value
+    d(s)     = sign( g · CAV )                            # ∈ {-1, 0, +1}
+sensitivity  = mean_s d(s)                                # signed sign-fraction ∈ [-1, 1]
 ```
 
-Cosine (not raw `g·CAV`) makes the score scale-invariant so it is comparable
-across channels/agents whose Q magnitudes differ (β's Q_goal ~18 vs α's ~8).
+We use `max_a Q_channel` (not the total-Q greedy action) so the score is
+independent of the policy / which action the agent happens to take.
 
-Reading: `+0.9` = concept strongly raises this channel's value; `-0.85` =
-strongly lowers it; `~0` = insensitive. Diverging colormap: blue(+) ↔ white(0)
-↔ red(−).
+Reading: `+0.9` = moving toward the concept consistently raises this channel's
+value; `-0.85` = consistently lowers it; `~0` = no consistent coupling. Diverging
+colormap: blue(+) ↔ white(0) ↔ red(−).
+
+**Reliability caveat (key finding):** signs are only trustworthy where the CAV
+separates the concept. `near_goal` CAV acc ~0.95 (reliable); `near_hazard` ~0.62
+(barely above chance — its signs are NOT interpretable). After dropping naive
+"expected sign" checks, the one robust, reliable contrastive finding is that
+**β (speed-first)'s goal head negatively couples to near_goal (−0.68) while
+α/γ are positive** — surprising and worth a focused note. Conclusions are drawn
+only on high-CAV-accuracy cells; low-accuracy cells are flagged, not explained.
 
 ## Scope (focused diagonal)
 

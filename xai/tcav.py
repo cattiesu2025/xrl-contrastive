@@ -171,6 +171,75 @@ def compute_tcav_score(
     return positive_count / len(concept_states)
 
 
+# ---------- Per-channel signed sensitivity (decomposed-Q TCAV) ----------
+
+def channel_directional_sensitivity(model, channel_idx, concept_states, cav):
+    """Signed sign-fraction of the directional derivative of a single channel's
+    value along the CAV, averaged over concept states. Returns a value in [-1, 1].
+
+      g(s) = ∂( max_a Q_channel(s, a) ) / ∂features
+      score = mean_s sign( g(s) · CAV )
+
+    +1 = moving toward the concept *consistently raises* this channel's value;
+    -1 = consistently lowers it; ~0 = no consistent coupling.
+
+    Why sign-fraction, not cosine: in the 64-dim feature space g and the CAV are
+    nearly orthogonal, so per-state cosines are tiny and their mean washes out to
+    ~0 (empirically observed). The SIGN of the directional derivative is the
+    stable signal — the same reason standard TCAV counts a sign fraction. We use
+    max_a Q_channel (the channel's own best value), so the score is independent
+    of the total-Q policy / which action the agent happens to take.
+    """
+    cav_t = torch.tensor(cav, dtype=torch.float32)
+    cav_unit = cav_t / (cav_t.norm() + 1e-8)
+    signs = []
+    for state in concept_states:
+        x = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+        features = model.encoder(x)
+        features.retain_grad()
+        q_c = model.heads[channel_idx](features)
+        model.zero_grad()
+        q_c.max().backward()
+        g = features.grad.squeeze(0)
+        signs.append(float(np.sign(float(torch.dot(g, cav_unit)))))
+    return float(np.mean(signs))
+
+
+# (channel_name, concept_name) — semantically matched diagonal for per-channel TCAV
+MATCHED_PAIRS = [
+    ("safety", "near_hazard"),
+    ("goal", "near_goal"),
+    ("coin", "near_resource"),
+]
+
+
+def run_per_channel_tcav(model, n_samples=150, seed=42):
+    """Signed sensitivity for each matched (channel, concept) pair, plus the
+    CAV accuracy (concept separability) so unreliable cells can be flagged.
+
+    Returns {"<channel>_x_<concept>": {channel, concept, sensitivity, cav_accuracy}}.
+    Interpret signs ONLY where cav_accuracy is high (concept linearly separable);
+    near_hazard separability is typically low (~0.6) and its signs are unreliable.
+    """
+    from agents.configs import REWARD_CHANNELS
+    random_states = collect_random_states(n_samples=n_samples, seed=seed + 1000)
+    results = {}
+    for ch_name, concept in MATCHED_PAIRS:
+        ch_idx = REWARD_CHANNELS.index(ch_name)
+        concept_states = collect_concept_states(concept, n_samples=n_samples, seed=seed)
+        if len(concept_states) < 20:
+            continue
+        cav, cav_acc = train_cav(model, concept_states, random_states)
+        sens = channel_directional_sensitivity(model, ch_idx, concept_states[:50], cav)
+        results[f"{ch_name}_x_{concept}"] = {
+            "channel": ch_name,
+            "concept": concept,
+            "sensitivity": sens,
+            "cav_accuracy": cav_acc,
+        }
+    return results
+
+
 # ---------- Full TCAV analysis ----------
 
 CONCEPT_NAMES = ["near_hazard", "near_goal", "near_resource", "open_space"]

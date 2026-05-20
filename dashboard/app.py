@@ -19,8 +19,6 @@ from agents.configs import PROFILES, REWARD_CHANNELS
 from agents.train import load_agent, evaluate_agent, greedy_trajectory
 from agents.decomposed_dqn import DecomposedDQN
 from xai.reward_decomp import decompose_state, trajectory_decomposition
-from xai.contrastive import find_disagreement_states, generate_explanation
-from xai.tcav import run_tcav_analysis
 from envs.multi_obj_grid import MultiObjGridEnv
 
 CHECKPOINT_DIR = "checkpoints"
@@ -140,8 +138,7 @@ def main():
         st.error("No trained agents found. Run `python -m experiments.run_all --phase train` first.")
         return
 
-    tabs = st.tabs(["Trajectories", "Q-Decomposition", "Contrastive", "TCAV",
-                    "Explore (click a cell)"])
+    tabs = st.tabs(["Trajectories", "Q-Decomposition", "Explore (click a cell)"])
 
     # ---- Tab 1: Trajectory comparison ----
     with tabs[0]:
@@ -192,66 +189,8 @@ def main():
         st.pyplot(fig)
         plt.close()
 
-    # ---- Tab 3: Contrastive explanations ----
+    # ---- Tab 3: Interactive explore ----
     with tabs[2]:
-        st.subheader("Contrastive explanations")
-
-        keys = list(agents.keys())
-        col1, col2 = st.columns(2)
-        with col1:
-            key_a = st.selectbox("Agent A", keys,
-                                 format_func=lambda k: agents[k]["name"], key="ca")
-        with col2:
-            key_b = st.selectbox("Agent B", [k for k in keys if k != key_a],
-                                 format_func=lambda k: agents[k]["name"], key="cb")
-
-        if st.button("Find disagreements"):
-            with st.spinner("Searching..."):
-                disagreements = find_disagreement_states(
-                    agents[key_a]["model"], agents[key_a]["weights"],
-                    agents[key_b]["model"], agents[key_b]["weights"],
-                )
-            st.write(f"Found **{len(disagreements)}** disagreement states.")
-
-            for i, d in enumerate(disagreements[:5]):
-                with st.expander(f"Example {i+1}: position {d['position']}"):
-                    explanation = generate_explanation(
-                        d, agents[key_a]["name"], agents[key_b]["name"])
-                    st.code(explanation)
-
-    # ---- Tab 4: TCAV ----
-    with tabs[3]:
-        st.subheader("TCAV concept sensitivity")
-
-        if st.button("Run TCAV analysis (may take ~30s)"):
-            all_tcav = {}
-            progress = st.progress(0)
-            for i, (key, agent) in enumerate(agents.items()):
-                st.write(f"Analysing {agent['name']}...")
-                results = run_tcav_analysis(agent["model"], agent["weights"], n_samples=100)
-                all_tcav[key] = results
-                progress.progress((i + 1) / len(agents))
-
-            # Heatmap
-            concepts = sorted(set().union(*[r.keys() for r in all_tcav.values()]))
-            matrix = np.zeros((len(agents), len(concepts)))
-            for i, key in enumerate(agents):
-                for j, concept in enumerate(concepts):
-                    if concept in all_tcav.get(key, {}):
-                        matrix[i, j] = all_tcav[key][concept]["tcav_score"]
-
-            fig, ax = plt.subplots(figsize=(8, 3))
-            import seaborn as sns
-            sns.heatmap(matrix, annot=True, fmt=".2f",
-                        xticklabels=concepts,
-                        yticklabels=[agents[k]["name"] for k in agents],
-                        cmap="RdYlGn", center=0.5, vmin=0, vmax=1, ax=ax)
-            ax.set_title("TCAV scores (> 0.5 = concept positively influences Q)")
-            st.pyplot(fig)
-            plt.close()
-
-    # ---- Tab 5: Interactive explore ----
-    with tabs[4]:
         st.subheader("Click a cell to compare all agents at that state")
         st.caption("Circled cells lie on an agent's greedy path (in-distribution). "
                    "Resource collection is fixed to *none collected* (collected=0).")

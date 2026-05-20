@@ -108,11 +108,16 @@ _CONTRAST_TEMPLATES = {
 
 
 def _dominant_channel(decomp: dict) -> tuple[str, float]:
-    """Return (channel_name, percentage) for the largest contributor."""
+    """Return (channel_name, share %) for the largest contributor.
+
+    Share is |contribution| / Σ|contributions|, which stays in [0, 100] and is
+    well-defined even when Q_total ≈ 0 — unlike contribution / Q_total, which
+    blows up (e.g. -918%, 2162%) when the signed contributions nearly cancel.
+    """
     contribs = decomp["greedy_channel_contributions"]
-    q_total = decomp["q_total"][decomp["greedy_action"]]
     dominant = max(contribs, key=lambda k: contribs[k])
-    pct = (contribs[dominant] / q_total * 100) if abs(q_total) > 1e-6 else 0.0
+    total_abs = sum(abs(v) for v in contribs.values())
+    pct = (abs(contribs[dominant]) / total_abs * 100) if total_abs > 1e-6 else 0.0
     return dominant, pct
 
 

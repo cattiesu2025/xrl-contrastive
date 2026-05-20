@@ -1,0 +1,56 @@
+{
+  "safety_first": {
+    "near_hazard": {
+      "tcav_score": 0.78,
+      "cav_accuracy": 0.64
+    },
+    "near_goal": {
+      "tcav_score": 0.92,
+      "cav_accuracy": 0.9466666666666667
+    },
+    "near_resource": {
+      "tcav_score": 0.8,
+      "cav_accuracy": 0.7
+    },
+    "open_space": {
+      "tcav_score": 0.78,
+      "cav_accuracy": 0.6733333333333333
+    }
+  },
+  "speed_first": {
+    "near_hazard": {
+      "tcav_score": 0.72,
+      "cav_accuracy": 0.64
+    },
+    "near_goal": {
+      "tcav_score": 0.32,
+      "cav_accuracy": 0.9466666666666667
+    },
+    "near_resource": {
+      "tcav_score": 0.92,
+      "cav_accuracy": 0.6666666666666666
+    },
+    "open_space": {
+      "tcav_score": 0.2,
+      "cav_accuracy": 0.7666666666666667
+    }
+  },
+  "balanced": {
+    "near_hazard": {
+      "tcav_score": 0.2,
+      "cav_accuracy": 0.6066666666666667
+    },
+    "near_goal": {
+      "tcav_score": 0.94,
+      "cav_accuracy": 0.9333333333333333
+    },
+    "near_resource": {
+      "tcav_score": 0.66,
+      "cav_accuracy": 0.6766666666666666
+    },
+    "open_space": {
+      "tcav_score": 0.78,
+      "cav_accuracy": 0.6933333333333334
+    }
+  }
+}

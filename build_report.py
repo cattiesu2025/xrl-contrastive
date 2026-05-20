@@ -26,8 +26,10 @@ in `report_utils.py` to keep the notebook lean.
 - All three agents reach the goal with **100% success** (18-step optimal path,
   zero hazard violations) — achieved only after diagnosing and fixing an
   overestimation-driven training collapse.
-- The behavioural contrast is real (300+ states where agents disagree) and the
-  reward decomposition cleanly attributes each decision to a channel.
+- On their actual optimal paths the three agents are behaviourally *similar*
+  (all reach the goal in 18 steps) and differ mainly in route; the contrastive
+  method compares them only at reachable, in-distribution states. Personality
+  lives in the reward weights and in counterfactual reactions, not the path.
 - TCAV is treated honestly: total-Q TCAV mixes channels and is hard to read; a
   per-channel variant is more principled but its signs are only trustworthy
   where the concept is linearly separable (we report CAV accuracy per cell).

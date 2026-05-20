@@ -11,10 +11,6 @@ z5535967_assignment2.ipynb
 .venv/
 venv/
 
-# 实验产物(模型权重 / 结果,不入库)
-checkpoints/
-results/
-
 # macOS
 .DS_Store
 

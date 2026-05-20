@@ -33,10 +33,12 @@ def phase_train():
 
     for profile_key, profile in PROFILES.items():
         print(f"\nTraining {profile['name']}...")
-        print(f"  Weights: {profile['weights']}")
+        print(f"  Weights: {profile['weights']}  (n_step={profile.get('n_step', 'default')})")
+        agent_config = {"n_step": profile["n_step"]} if "n_step" in profile else None
         model, returns = train_agent(
             profile_name=profile_key,
             weights=profile["weights"],
+            config=agent_config,
             save_dir=CHECKPOINT_DIR,
         )
         metrics = evaluate_agent(model, profile["weights"])

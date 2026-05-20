@@ -1,0 +1,210 @@
+"""
+Streamlit dashboard for interactive contrastive explanations.
+
+Launch:  streamlit run dashboard/app.py
+"""
+
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import streamlit as st
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+
+from agents.configs import PROFILES, REWARD_CHANNELS
+from agents.train import load_agent, evaluate_agent, greedy_trajectory
+from agents.decomposed_dqn import DecomposedDQN
+from xai.reward_decomp import decompose_state, trajectory_decomposition
+from xai.contrastive import find_disagreement_states, generate_explanation
+from xai.tcav import run_tcav_analysis
+from envs.multi_obj_grid import MultiObjGridEnv
+
+CHECKPOINT_DIR = "checkpoints"
+
+
+# ---- Helpers ----
+
+@st.cache_resource
+def load_all_agents():
+    agents = {}
+    for key, profile in PROFILES.items():
+        path = os.path.join(CHECKPOINT_DIR, f"{key}.pt")
+        if os.path.exists(path):
+            model, ckpt = load_agent(path)
+            agents[key] = {
+                "model": model,
+                "weights": profile["weights"],
+                "name": profile["name"],
+                "color": profile["color"],
+                "returns": ckpt.get("episode_returns", []),
+            }
+    return agents
+
+
+def draw_grid(env, path=None, title="", ax=None):
+    """Draw grid world on matplotlib axis."""
+    G = env.GRID_SIZE
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(5, 5))
+
+    ax.set_xlim(0, G)
+    ax.set_ylim(0, G)
+    ax.set_xticks(range(G + 1))
+    ax.set_yticks(range(G + 1))
+    ax.grid(True, color="grey", linewidth=0.3)
+    ax.set_aspect("equal")
+    ax.set_title(title, fontsize=11, fontweight="bold")
+
+    for r, c in env.HAZARDS:
+        ax.add_patch(plt.Rectangle((c, G - 1 - r), 1, 1, fc="#e74c3c", ec="grey", lw=0.3))
+        ax.text(c + 0.5, G - 0.5 - r, "H", ha="center", va="center", fontsize=8, color="white")
+
+    for idx, (r, c) in enumerate(env.RESOURCES):
+        ax.add_patch(plt.Rectangle((c, G - 1 - r), 1, 1, fc="#f1c40f", ec="grey", lw=0.3))
+        ax.text(c + 0.5, G - 0.5 - r, "R", ha="center", va="center", fontsize=8)
+
+    sr, sc = env.START
+    ax.add_patch(plt.Rectangle((sc, G - 1 - sr), 1, 1, fc="#3498db", ec="grey", lw=0.3))
+    ax.text(sc + 0.5, G - 0.5 - sr, "S", ha="center", va="center", fontsize=9, color="white")
+
+    gr, gc = env.GOAL
+    ax.add_patch(plt.Rectangle((gc, G - 1 - gr), 1, 1, fc="#27ae60", ec="grey", lw=0.3))
+    ax.text(gc + 0.5, G - 0.5 - gr, "G", ha="center", va="center", fontsize=9, color="white")
+
+    if path:
+        for i, (r, c) in enumerate(path):
+            ax.plot(c + 0.5, G - 0.5 - r, "o", color="#2c3e50", markersize=4, alpha=0.6)
+            if i > 0:
+                pr, pc = path[i - 1]
+                ax.annotate("", xy=(c + 0.5, G - 0.5 - r),
+                            xytext=(pc + 0.5, G - 0.5 - pr),
+                            arrowprops=dict(arrowstyle="->", color="#2c3e50", lw=1.2))
+
+    return ax
+
+
+# ---- App ----
+
+def main():
+    st.set_page_config(page_title="XRL Contrastive Dashboard", layout="wide")
+    st.title("XRL-Contrastive: Explainable Multi-Objective RL")
+
+    agents = load_all_agents()
+    if not agents:
+        st.error("No trained agents found. Run `python -m experiments.run_all --phase train` first.")
+        return
+
+    tabs = st.tabs(["Trajectories", "Q-Decomposition", "Contrastive", "TCAV"])
+
+    # ---- Tab 1: Trajectory comparison ----
+    with tabs[0]:
+        st.subheader("Greedy trajectory comparison")
+
+        cols = st.columns(len(agents))
+        for col, (key, agent) in zip(cols, agents.items()):
+            with col:
+                traj = greedy_trajectory(agent["model"], agent["weights"])
+                env = MultiObjGridEnv()
+                fig, ax = plt.subplots(figsize=(4, 4))
+                draw_grid(env, path=traj["positions"], title=agent["name"], ax=ax)
+                st.pyplot(fig)
+                plt.close()
+
+                metrics = evaluate_agent(agent["model"], agent["weights"], n_eval=50)
+                st.metric("Success rate", f"{metrics['success_rate']:.0%}")
+                st.metric("Avg R1", f"{metrics['avg_R1']:.2f}")
+                st.metric("Avg R2", f"{metrics['avg_R2']:.2f}")
+
+    # ---- Tab 2: Q-value decomposition ----
+    with tabs[1]:
+        st.subheader("Step-by-step Q-value decomposition")
+
+        agent_key = st.selectbox("Select agent", list(agents.keys()),
+                                 format_func=lambda k: agents[k]["name"])
+        agent = agents[agent_key]
+
+        steps = trajectory_decomposition(agent["model"], agent["weights"])
+        step_idx = st.slider("Step", 0, max(len(steps) - 1, 1), 0) if len(steps) > 1 else 0
+
+        step = steps[step_idx]
+        st.write(f"**Position:** {step['position']}  →  "
+                 f"**Action:** {step['action_names'][step['greedy_action']]}")
+
+        # Bar chart
+        fig, ax = plt.subplots(figsize=(8, 3))
+        channel_names = REWARD_CHANNELS
+        greedy = step["greedy_action"]
+        vals = [step["greedy_channel_contributions"][ch] for ch in channel_names]
+        colors = ["#27ae60", "#e74c3c", "#f1c40f", "#95a5a6"]
+        bars = ax.barh(channel_names, vals, color=colors, height=0.6)
+        ax.set_xlabel("Weighted Q contribution")
+        ax.axvline(0, color="black", linewidth=0.5)
+        for bar, v in zip(bars, vals):
+            ax.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height() / 2,
+                    f"{v:.2f}", va="center", fontsize=9)
+        st.pyplot(fig)
+        plt.close()
+
+    # ---- Tab 3: Contrastive explanations ----
+    with tabs[2]:
+        st.subheader("Contrastive explanations")
+
+        keys = list(agents.keys())
+        col1, col2 = st.columns(2)
+        with col1:
+            key_a = st.selectbox("Agent A", keys,
+                                 format_func=lambda k: agents[k]["name"], key="ca")
+        with col2:
+            key_b = st.selectbox("Agent B", [k for k in keys if k != key_a],
+                                 format_func=lambda k: agents[k]["name"], key="cb")
+
+        if st.button("Find disagreements"):
+            with st.spinner("Searching..."):
+                disagreements = find_disagreement_states(
+                    agents[key_a]["model"], agents[key_a]["weights"],
+                    agents[key_b]["model"], agents[key_b]["weights"],
+                )
+            st.write(f"Found **{len(disagreements)}** disagreement states.")
+
+            for i, d in enumerate(disagreements[:5]):
+                with st.expander(f"Example {i+1}: position {d['position']}"):
+                    explanation = generate_explanation(
+                        d, agents[key_a]["name"], agents[key_b]["name"])
+                    st.code(explanation)
+
+    # ---- Tab 4: TCAV ----
+    with tabs[3]:
+        st.subheader("TCAV concept sensitivity")
+
+        if st.button("Run TCAV analysis (may take ~30s)"):
+            all_tcav = {}
+            progress = st.progress(0)
+            for i, (key, agent) in enumerate(agents.items()):
+                st.write(f"Analysing {agent['name']}...")
+                results = run_tcav_analysis(agent["model"], agent["weights"], n_samples=100)
+                all_tcav[key] = results
+                progress.progress((i + 1) / len(agents))
+
+            # Heatmap
+            concepts = sorted(set().union(*[r.keys() for r in all_tcav.values()]))
+            matrix = np.zeros((len(agents), len(concepts)))
+            for i, key in enumerate(agents):
+                for j, concept in enumerate(concepts):
+                    if concept in all_tcav.get(key, {}):
+                        matrix[i, j] = all_tcav[key][concept]["tcav_score"]
+
+            fig, ax = plt.subplots(figsize=(8, 3))
+            import seaborn as sns
+            sns.heatmap(matrix, annot=True, fmt=".2f",
+                        xticklabels=concepts,
+                        yticklabels=[agents[k]["name"] for k in agents],
+                        cmap="RdYlGn", center=0.5, vmin=0, vmax=1, ax=ax)
+            ax.set_title("TCAV scores (> 0.5 = concept positively influences Q)")
+            st.pyplot(fig)
+            plt.close()
+
+
+if __name__ == "__main__":
+    main()

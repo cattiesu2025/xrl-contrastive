@@ -31,7 +31,7 @@ def train_agent(
     Train a DecomposedDQN agent with the given reward channel weights.
 
     Args:
-        profile_name: identifier for saving (e.g. "safety_first")
+        profile_name: identifier for saving (e.g. "navigator")
         weights: list of 4 floats [w_goal, w_safety, w_coin, w_step]
         config: training hyperparameters (defaults to TRAIN_CONFIG)
         save_dir: directory for model checkpoints

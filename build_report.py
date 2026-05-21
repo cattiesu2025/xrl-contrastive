@@ -115,9 +115,24 @@ md("""## 4. Explainability
 ### 4.1 Reward decomposition
 
 Because the DQN has per-channel heads, every decision decomposes intrinsically:
-the contribution of channel `c` to the chosen action is `wᵢ·Qᵢ`. At the start
-state the agents weight the channels differently — note how `β`'s goal channel
-dominates (high `w_goal`) while `γ` gives the coin channel real weight.
+the contribution of channel `c` to the chosen action is `wᵢ·Qᵢ`. The bars below
+show this at the start state.
+
+**What this does and does not show.** The decomposition reliably reveals the
+*mechanism*: each action's value is a weighted sum of channel contributions. It
+does **not**, on its own, reveal personality — at the (safe) start cell **all
+three agents are goal-led**, because with no hazard nearby the safety channel is
+≈0 for everyone, so the bars look alike. (This is the honest counterpart to a
+tempting but invalid reading of these bars as "agent X cares about channel Y".)
+
+Two facts make this unavoidable: (1) the reward signals are identical across
+agents, so the per-channel Q-values are shared *in principle* — only the
+**weights** differ; (2) the safety channel only grows large *adjacent to a
+hazard*, and those cells lie off the agents' hazard-avoiding optimal paths, where
+the learned Q-values are off-distribution and unreliable (we verified e.g. a
+`Q_safety` of +6.7, an impossible positive value, at one such cell). So the
+personality lives in the **weights** and the **routes** they produce — not in a
+single state's decomposition. See Limitations.
 """)
 
 code("""from xai.reward_decomp import trajectory_decomposition
@@ -200,6 +215,12 @@ md("""## 5. Limitations & connection to the research direction
 - **Per-channel TCAV reliability is concept-dependent.** Conclusions hold only
   where CAV accuracy is high; `near_hazard` is barely separable in this small
   encoder, so its signs are reported but not interpreted.
+- **Reward decomposition does not, by itself, separate the agents.** The reward
+  signals are identical across agents, so the per-channel Q-values are shared in
+  principle — only the weights differ. On safe cells (the whole optimal path) the
+  safety channel is ≈0 and every agent is goal-led; near hazards (off-path) the
+  safety channel is large but off-distribution and unreliable. The personality is
+  in the weights and the resulting routes, not in any single state's bars.
 - **n-step is confounded with the weight profile.** Each agent uses a different
   `n`, so representation-level differences (TCAV) cannot be attributed to
   personality alone. Behaviourally, however, the comparison is clean (all reach

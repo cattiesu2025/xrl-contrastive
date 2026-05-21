@@ -76,9 +76,11 @@ def train_agent(
     diag_ep_outcomes = []  # 'goal' / 'hazard' / 'timeout' per episode in window
 
     # --- Best-model tracking (catastrophic-forgetting guard) ---
-    # Use training-window goal rate as the selection signal (deterministic eval is binary
-    # because env+policy are deterministic at eps=0). The two correlate well in practice.
-    best_goal_rate = -1.0
+    # Select the snapshot with the highest window-average SCALARISED return
+    # (Σ wᵢ·channelᵢ). This is the quantity each agent actually optimises, so it
+    # works for any profile — a collector (which ignores the goal) is scored on the
+    # coins it gathers, not on a goal-rate that would be ~0 for it.
+    best_avg_return = -1e18
     best_state_dict = None
     best_episode = 0
 
@@ -212,12 +214,12 @@ def train_agent(
             n_goal = diag_ep_outcomes.count("goal")
             n_haz = diag_ep_outcomes.count("hazard")
             n_to = diag_ep_outcomes.count("timeout")
-            goal_rate = n_goal / max(len(diag_ep_outcomes), 1)
+            window_avg_return = float(np.mean(episode_returns[-diag_window:]))
 
-            # Best-model: keep the snapshot with highest training-window goal rate.
-            # Tie-break by latest (later snapshots are more "trained").
-            if goal_rate >= best_goal_rate:
-                best_goal_rate = goal_rate
+            # Best-model: keep the snapshot with the highest window-average scalarised
+            # return (what the agent optimises). Tie-break by latest.
+            if window_avg_return >= best_avg_return:
+                best_avg_return = window_avg_return
                 best_state_dict = copy.deepcopy(online_net.state_dict())
                 best_episode = ep + 1
 
@@ -229,7 +231,7 @@ def train_agent(
                 iterator.write(
                     f"  [ep {ep+1:4d}] outcomes: goal={n_goal:3d} haz={n_haz:3d} timeout={n_to:3d}  "
                     f"|TD|max={diag_td_abs_max:.2f}  loss_max={diag_loss_max:.2f}  "
-                    f"best={best_goal_rate:.0%}@ep{best_episode}  Q ranges: {q_ranges}"
+                    f"best_return={best_avg_return:.2f}@ep{best_episode}  Q ranges: {q_ranges}"
                 )
             # Reset window accumulators
             diag_q_max = [-1e18] * len(REWARD_CHANNELS)
@@ -246,7 +248,7 @@ def train_agent(
     else:
         state_to_save = online_net.state_dict()
         best_episode = cfg["n_episodes"]
-        best_goal_rate = float("nan")
+        best_avg_return = float("nan")
 
     save_path = os.path.join(save_dir, f"{profile_name}.pt")
     torch.save({
@@ -256,12 +258,12 @@ def train_agent(
         "config": cfg,
         "episode_returns": episode_returns,
         "best_episode": best_episode,
-        "best_goal_rate": best_goal_rate,
+        "best_avg_return": best_avg_return,
     }, save_path)
 
     if verbose:
         print(f"  Saved best snapshot from ep {best_episode} "
-              f"(training goal-rate {best_goal_rate:.0%}) to {save_path}")
+              f"(window-avg return {best_avg_return:.2f}) to {save_path}")
 
     return online_net, episode_returns
 

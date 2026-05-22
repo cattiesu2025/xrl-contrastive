@@ -188,12 +188,11 @@ def _agent_sentence(
     channel that *tips the choice* (differentiator), not the largest-magnitude one."""
     act_name = MultiObjGridEnv.ACTION_NAMES[action].lower()
     ctx = _direction_context(action, row, col, env)
-    q_total = decomp["q_total"][action]
     driver, _ = differentiating_channel(decomp)
     reason = _CHANNEL_REASON[driver].format(dir=act_name)
     return (
-        f"{name} chose {act_name.upper()} [{ctx}] "
-        f"(Q_total = {q_total:+.2f}) — the {driver} channel tips this choice: {reason}."
+        f"{name} chose {act_name.upper()} [{ctx}] — "
+        f"the {driver} channel tips this choice: {reason}."
     )
 
 

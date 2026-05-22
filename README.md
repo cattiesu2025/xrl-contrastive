@@ -1,54 +1,107 @@
-# XRL-Contrastive: Concept-Guided Contrastive Explanations for Multi-Objective Deep RL
+# XRL-Contrastive: Explaining Multi-Objective RL Agents
 
-A research project exploring explainable reinforcement learning through TCAV concept probing
-and reward decomposition, enabling contrastive comparisons between agents with different
-value priorities.
+Three multi-objective deep-RL agents that differ along a **navigation-vs-collection**
+priority, explained and contrasted with **per-channel reward decomposition**,
+**contrastive explanations**, and **TCAV** concept attribution. Built on a
+4-channel GridWorld extended from COMP9414 Assignment 2.
 
-## Quick start
+## Headline results
+
+- **All three agents reach the goal (100% success)** — achieved only after
+  diagnosing and fixing an overestimation-driven training collapse (the *deadly
+  triad*).
+- **They are genuinely distinct in behaviour:** the navigator goes straight (18
+  steps, 1 incidental coin), the collector **detours** (20 steps) to grab 3
+  coins, the balanced agent sits in between.
+- **Key XAI finding — personality lives in the weights.** Explanations that
+  include the scalarisation weights (reward decomposition, total-Q TCAV) recover
+  each agent's character; a weight-agnostic *per-channel* TCAV does not, because
+  the per-channel Q-values are shared (identical reward signals).
+- **Explanations name the *decisive* channel** (leave-one-out): a coin detour is
+  attributed to the coin channel — the one whose removal would flip the choice —
+  not merely the largest-magnitude channel.
+
+## 📊 The report
+
+**[`report.ipynb`](report.ipynb)** is the full report — it renders directly on
+GitHub with all figures and analysis. Start there.
+
+## Run it
+
+Trained checkpoints and results are committed, so the repo is **clone-and-run**:
 
 ```bash
-pip install torch numpy matplotlib seaborn streamlit scikit-learn tqdm
-cd xrl-contrastive
+pip install -r requirements.txt
 
-# 1. Train three agents (~10 min each)
-python -m experiments.run_all --phase train
+# Read the report (or just open report.ipynb on GitHub)
+jupyter notebook report.ipynb
 
-# 2. Run XAI analysis (~1 min)
-python -m experiments.run_all --phase xai
-
-# 3. Launch dashboard
+# Interactive dashboard
 streamlit run dashboard/app.py
+
+# (optional) retrain the three agents from scratch — ~15 min total
+python -m experiments.run_all --phase train
+# regenerate the report notebook from source
+python build_report.py && jupyter nbconvert --to notebook --execute --inplace report.ipynb
 ```
+
+## Dashboard
+
+Three tabs (`streamlit run dashboard/app.py`):
+- **Trajectories** — each agent's greedy path on the grid.
+- **Q-Decomposition** — step-by-step per-channel contribution bars.
+- **Explore (click a cell)** — click any cell on the agents' paths to compare
+  their decisions *at the state each agent actually reaches it in* (with the
+  coins it has collected so far), plus a natural-language explanation naming the
+  decisive channel for each.
+
+<!-- To add a screenshot: save one to assets/explore.png and reference it here. -->
 
 ## Project structure
 
 ```
 xrl-contrastive/
 ├── envs/
-│   ├── multi_obj_grid.py      # Multi-objective GridWorld (adapted from COMP9414 A2)
-│   └── reward_wrapper.py      # Gymnasium-compatible wrapper with 4-channel rewards
+│   └── multi_obj_grid.py     # 10x10 multi-objective GridWorld, 4-channel rewards
 ├── agents/
-│   ├── decomposed_dqn.py      # Multi-head DQN with per-channel Q-heads
-│   ├── replay_buffer.py       # Experience replay
-│   ├── train.py               # Training loop
-│   └── configs.py             # Agent profiles (safety / speed / balanced)
+│   ├── decomposed_dqn.py     # shared encoder + per-channel Q-heads
+│   ├── replay_buffer.py      # n-step experience replay
+│   ├── train.py              # training loop (n-step, best-model checkpoint, diagnostics)
+│   └── configs.py            # agent profiles: navigator / collector / balanced
 ├── xai/
-│   ├── tcav.py                # TCAV concept activation vector analysis
-│   ├── reward_decomp.py       # Q-value decomposition utilities
-│   └── contrastive.py         # Contrastive explanation generation
-├── dashboard/
-│   └── app.py                 # Streamlit interactive dashboard
+│   ├── tcav.py               # total-Q TCAV + per-channel signed sensitivity
+│   ├── reward_decomp.py      # Q decomposition + decisive-channel attribution
+│   └── contrastive.py        # trajectory-anchored contrastive explanations
+├── dashboard/app.py          # Streamlit interactive dashboard
 ├── experiments/
-│   ├── run_all.py             # End-to-end pipeline
-│   └── evaluate.py            # Quantitative metrics
-└── README.md
+│   ├── run_all.py            # train / xai pipeline
+│   └── evaluate.py           # quantitative metrics
+├── tests/                    # pytest: contrastive reachability + TCAV reliability
+├── report_utils.py           # plotting helpers for the report
+├── build_report.py           # assembles report.ipynb via nbformat
+├── diagnose.py               # training-divergence diagnostics
+└── report.ipynb              # the report
 ```
+
+## Key findings (see the report for detail)
+
+- **Training stability is the core engineering result.** Naive training collapsed
+  to 0% (deadly triad: Q-values diverging, policy stuck). Huber loss and Double
+  DQN *hurt* in this sparse-reward setting; **n-step returns** fixed it, with the
+  bootstrap horizon needing to grow with a channel's weight to stay bounded —
+  pointing directly at **Elastic Step DQN** (adaptive `n`).
+- **The environment shapes which personalities are expressible.** A
+  safety-vs-speed axis produced no behavioural trade-off (shortest path is also
+  safest); goal-vs-coin does, so the agents are genuinely distinguishable.
+- **Per-channel TCAV reliability is concept-dependent** (e.g. `near_hazard` is
+  barely separable); conclusions are drawn only where CAV accuracy is high.
 
 ## Relation to COMP9414 Assignment 2
 
-This project extends the multi-objective RL environment from the assignment with:
-
-- **Tabular → Neural**: Q-table replaced by multi-head DQN (PyTorch) to enable gradient-based XAI
-- **2-channel → 4-channel rewards**: goal / safety / coin / step separated for finer decomposition
-- **New XAI layer**: TCAV concept probing + reward decomposition + contrastive explanations
-- **Interactive dashboard**: Streamlit app for comparing agent decisions side-by-side
+Extends the assignment's multi-objective GridWorld with:
+- **Tabular → neural:** Q-table replaced by a multi-head DQN to enable
+  gradient-based XAI (and surfacing the deadly-triad challenges that came with it).
+- **2-channel → 4-channel rewards:** goal / safety / coin / step, for finer
+  decomposition.
+- **An XAI layer:** TCAV, reward decomposition, and contrastive explanations.
+- **An interactive dashboard** for comparing agents side by side.

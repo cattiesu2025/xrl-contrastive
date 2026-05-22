@@ -9,7 +9,7 @@ import numpy as np
 from agents.decomposed_dqn import DecomposedDQN
 from agents.configs import REWARD_CHANNELS
 from envs.multi_obj_grid import MultiObjGridEnv
-from xai.reward_decomp import decompose_state
+from xai.reward_decomp import decompose_state, differentiating_channel
 
 
 def find_disagreement_states(
@@ -184,16 +184,16 @@ def _agent_sentence(
     decomp: dict,
     env: MultiObjGridEnv,
 ) -> str:
-    """One self-contained sentence explaining a single agent's decision."""
+    """One self-contained sentence explaining a single agent's decision, using the
+    channel that *tips the choice* (differentiator), not the largest-magnitude one."""
     act_name = MultiObjGridEnv.ACTION_NAMES[action].lower()
     ctx = _direction_context(action, row, col, env)
     q_total = decomp["q_total"][action]
-    dominant, pct = _dominant_channel(decomp)
-    reason = _CHANNEL_REASON[dominant].format(dir=act_name)
+    driver, _ = differentiating_channel(decomp)
+    reason = _CHANNEL_REASON[driver].format(dir=act_name)
     return (
         f"{name} chose {act_name.upper()} [{ctx}] "
-        f"(Q_total = {q_total:+.2f}), "
-        f"driven mainly by {dominant} ({pct:.0f}%) — {reason}."
+        f"(Q_total = {q_total:+.2f}) — the {driver} channel tips this choice: {reason}."
     )
 
 
@@ -215,24 +215,24 @@ def generate_explanation(
 
     decomp_a = disagreement["decomp_a"]
     decomp_b = disagreement["decomp_b"]
-    dominant_a, _ = _dominant_channel(decomp_a)
-    dominant_b, _ = _dominant_channel(decomp_b)
+    driver_a, _ = differentiating_channel(decomp_a)
+    driver_b, _ = differentiating_channel(decomp_b)
 
     sent_a = _agent_sentence(name_a, disagreement["action_a"], row, col, decomp_a, env)
     sent_b = _agent_sentence(name_b, disagreement["action_b"], row, col, decomp_b, env)
 
-    if dominant_a == dominant_b:
-        # Same dominant channel → they share the objective but disagree on the route.
+    if driver_a == driver_b:
+        # Same tipping channel → they share the objective but disagree on the route.
         act_a = MultiObjGridEnv.ACTION_NAMES[disagreement["action_a"]].lower()
         act_b = MultiObjGridEnv.ACTION_NAMES[disagreement["action_b"]].lower()
         contrast = (
-            f"Both prioritise {dominant_a} here but take different routes — "
-            f"{name_a} goes {act_a}, {name_b} goes {act_b}."
+            f"Both are tipped by the {driver_a} channel here but take different "
+            f"routes — {name_a} goes {act_a}, {name_b} goes {act_b}."
         )
     else:
         contrast = _CONTRAST_TEMPLATES.get(
-            (dominant_a, dominant_b),
-            f"{name_a} is driven by {dominant_a}, while {name_b} is driven by {dominant_b}.",
+            (driver_a, driver_b),
+            f"{name_a} is driven by {driver_a}, while {name_b} is driven by {driver_b}.",
         ).format(a=name_a, b=name_b)
 
     return "\n".join([
@@ -241,6 +241,13 @@ def generate_explanation(
         f"  {sent_b}",
         f"  → {contrast}",
     ])
+
+
+def explain_agent_decision(name: str, position: tuple, decomp: dict) -> str:
+    """Public one-sentence natural-language explanation of a single agent's
+    decision at a cell, using the decisive (differentiating) channel."""
+    env = MultiObjGridEnv()
+    return _agent_sentence(name, decomp["greedy_action"], position[0], position[1], decomp, env)
 
 
 def contrastive_report(

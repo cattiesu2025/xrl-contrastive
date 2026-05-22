@@ -55,7 +55,47 @@ def decompose_state(
         "q_total": q_info["total"],
         "channels": channels,
         "greedy_channel_contributions": contributions,
+        "weights": list(weights),
     }
+
+
+def differentiating_channel(decomp: dict) -> tuple[str, float]:
+    """Return (channel, score): the channel that *decides* the chosen action — the
+    one without which the agent would have acted differently.
+
+    Largest-magnitude ("dominant") is misleading: the goal channel can be biggest
+    everywhere yet nearly equal across actions, so it does not explain the choice.
+    Instead we use leave-one-out: for each channel, recompute the greedy action
+    with that channel removed; if it flips, the channel was decisive. E.g. a coin
+    detour is driven by the coin channel because removing it makes the agent head
+    straight for the goal — even though the goal channel is larger in absolute
+    terms. Falls back to the largest greedy-vs-runner-up margin if no single
+    channel is individually decisive.
+    """
+    q_total = list(decomp["q_total"])
+    greedy = decomp["greedy_action"]
+    weights = decomp["weights"]
+    channels = decomp["channels"]
+    n = len(q_total)
+
+    best_ch, best_score = None, -1e18
+    for i, ch in enumerate(REWARD_CHANNELS):
+        total_without = [q_total[a] - float(weights[i]) * float(channels[ch][a]) for a in range(n)]
+        alt = max(range(n), key=lambda a: total_without[a])
+        if alt != greedy:  # removing ch flips the decision → ch is decisive
+            score = float(weights[i]) * float(channels[ch][greedy] - channels[ch][alt])
+            if score > best_score:
+                best_score, best_ch = score, ch
+    if best_ch is not None:
+        return best_ch, best_score
+
+    # No single channel flips the choice → report the largest greedy-vs-runner-up margin.
+    order = sorted(range(n), key=lambda a: q_total[a], reverse=True)
+    runner_up = order[1] if n > 1 else greedy
+    diffs = {ch: float(weights[i]) * float(channels[ch][greedy] - channels[ch][runner_up])
+             for i, ch in enumerate(REWARD_CHANNELS)}
+    best = max(diffs, key=lambda c: diffs[c])
+    return best, diffs[best]
 
 
 def trajectory_decomposition(

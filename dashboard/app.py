@@ -18,7 +18,8 @@ import plotly.graph_objects as go
 from agents.configs import PROFILES, REWARD_CHANNELS
 from agents.train import load_agent, evaluate_agent, greedy_trajectory
 from agents.decomposed_dqn import DecomposedDQN
-from xai.reward_decomp import decompose_state, trajectory_decomposition
+from xai.reward_decomp import decompose_state, trajectory_decomposition, differentiating_channel
+from xai.contrastive import explain_agent_decision
 from envs.multi_obj_grid import MultiObjGridEnv
 
 CHECKPOINT_DIR = "checkpoints"
@@ -223,31 +224,42 @@ def main():
             col, row = int(round(pts[0]["x"])), int(round(pts[0]["y"]))
             pos = (row, col)
             st.markdown(f"**Cell ({row}, {col})**")
-            rows = []
+            rows, sentences, visiting = [], [], []
             for k, ag in agents.items():
                 step = paths[k].get(pos)
                 if step is None:
                     rows.append({"agent": ag["name"], "visits?": "no", "coins so far": "—",
-                                 "action": "—", "dominant": "—",
+                                 "action": "—", "driver": "—",
                                  **{f"Q_{ch}": "—" for ch in REWARD_CHANNELS}})
                 else:
-                    contribs = step["decomp"]["greedy_channel_contributions"]
+                    decomp = step["decomp"]
+                    contribs = decomp["greedy_channel_contributions"]
+                    driver, _ = differentiating_channel(decomp)
                     rows.append({
                         "agent": ag["name"], "visits?": "yes",
                         "coins so far": bin(step["collected"]).count("1"),
                         "action": MultiObjGridEnv.ACTION_NAMES[step["action"]],
-                        "dominant": max(contribs, key=lambda x: contribs[x]),
+                        "driver": driver,
                         **{f"Q_{ch}": round(contribs[ch], 2) for ch in REWARD_CHANNELS},
                     })
+                    sentences.append(explain_agent_decision(ag["name"], pos, decomp))
+                    visiting.append((ag["name"], MultiObjGridEnv.ACTION_NAMES[step["action"]], driver))
             st.dataframe(pd.DataFrame(rows), hide_index=True)
-            visiting = [r for r in rows if r["visits?"] == "yes"]
-            acts = {r["action"] for r in visiting}
+
+            # Natural-language explanation (decisive channel = what tips each choice)
+            st.markdown("**Why each agent chose its action** (driver = the channel that, "
+                        "if removed, would flip the decision):")
+            for s in sentences:
+                st.markdown(f"- {s}")
+
+            acts = {a for _, a, _ in visiting}
             if len(visiting) <= 1:
                 st.caption("Only one agent passes through this cell on its path.")
             elif len(acts) == 1:
-                st.caption(f"All visiting agents agree: {acts.pop()}.")
+                st.caption(f"All visiting agents agree on **{acts.pop()}**.")
             else:
-                st.caption(f"Agents diverge here: {', '.join(sorted(acts))}.")
+                drivers = ", ".join(f"{n} ({a}, driven by {d})" for n, a, d in visiting)
+                st.caption(f"They diverge — {drivers}.")
 
 
 if __name__ == "__main__":

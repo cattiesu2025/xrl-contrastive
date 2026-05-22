@@ -85,13 +85,25 @@ def draw_grid(env, path=None, title="", ax=None):
     return ax
 
 
-def trajectory_positions(agents):
-    """Union of grid positions visited on each agent's greedy trajectory."""
-    pos = set()
-    for ag in agents.values():
-        traj = greedy_trajectory(ag["model"], ag["weights"])
-        pos.update(tuple(p) for p in traj["positions"])
-    return pos
+def agent_path_steps(model, weights, max_steps=200):
+    """Walk the greedy trajectory and record, for each cell visited, the agent's
+    REAL decision there: {(row,col): {collected, action, decomp}} (first visit).
+
+    Using the agent's actual collected-coins state at each cell (not a fixed
+    collected=0) keeps every shown decision in-distribution — the agent really
+    experienced that state on its path."""
+    env = MultiObjGridEnv(seed=0)
+    obs = env.reset()
+    steps = {}
+    for _ in range(max_steps):
+        pos = (env.row, env.col)
+        d = decompose_state(model, obs, weights)
+        if pos not in steps:
+            steps[pos] = {"collected": env.collected, "action": d["greedy_action"], "decomp": d}
+        obs, _, done, _ = env.step(d["greedy_action"])
+        if done:
+            break
+    return steps
 
 
 def build_clickable_grid(env, on_path):
@@ -191,11 +203,13 @@ def main():
 
     # ---- Tab 3: Interactive explore ----
     with tabs[2]:
-        st.subheader("Click a cell to compare all agents at that state")
-        st.caption("Circled cells lie on an agent's greedy path (in-distribution). "
-                   "Resource collection is fixed to *none collected* (collected=0).")
+        st.subheader("Click a cell on the agents' paths to compare their decisions")
+        st.caption("Each agent's decision is shown at the state it ACTUALLY reaches that cell in "
+                   "— with the coins it has collected so far on its own greedy path — so every "
+                   "row is a real, in-distribution decision. Ringed cells lie on ≥1 agent's path.")
         env = MultiObjGridEnv()
-        on_path = trajectory_positions(agents)
+        paths = {k: agent_path_steps(ag["model"], ag["weights"]) for k, ag in agents.items()}
+        on_path = set().union(*[set(p) for p in paths.values()])
         event = st.plotly_chart(build_clickable_grid(env, on_path),
                                 on_select="rerun", selection_mode="points", key="explore_grid")
 
@@ -204,31 +218,36 @@ def main():
             pts = event.selection.get("points", []) if isinstance(event.selection, dict) \
                 else getattr(event.selection, "points", [])
         if not pts:
-            st.info("Click any open cell above.")
+            st.info("Click any ringed cell (a cell on at least one agent's greedy path).")
         else:
             col, row = int(round(pts[0]["x"])), int(round(pts[0]["y"]))
-            st.markdown(f"**Selected (row, col) = ({row}, {col})**")
-            if (row, col) in env.HAZARDS or (row, col) == env.GOAL:
-                st.warning("Terminal cell (hazard/goal) — agents take no action here.")
-            else:
-                if (row, col) not in on_path:
-                    st.warning("⚠️ Off-path: no agent visits this cell on its greedy route, "
-                               "so the Q-values here are off-distribution and may be unreliable.")
-                state = env.features_from_pos(row, col, 0)
-                rows = []
-                for ag in agents.values():
-                    d = decompose_state(ag["model"], state, ag["weights"])
-                    contribs = d["greedy_channel_contributions"]
+            pos = (row, col)
+            st.markdown(f"**Cell ({row}, {col})**")
+            rows = []
+            for k, ag in agents.items():
+                step = paths[k].get(pos)
+                if step is None:
+                    rows.append({"agent": ag["name"], "visits?": "no", "coins so far": "—",
+                                 "action": "—", "dominant": "—",
+                                 **{f"Q_{ch}": "—" for ch in REWARD_CHANNELS}})
+                else:
+                    contribs = step["decomp"]["greedy_channel_contributions"]
                     rows.append({
-                        "agent": ag["name"],
-                        "action": MultiObjGridEnv.ACTION_NAMES[d["greedy_action"]],
-                        "dominant": max(contribs, key=lambda k: contribs[k]),
+                        "agent": ag["name"], "visits?": "yes",
+                        "coins so far": bin(step["collected"]).count("1"),
+                        "action": MultiObjGridEnv.ACTION_NAMES[step["action"]],
+                        "dominant": max(contribs, key=lambda x: contribs[x]),
                         **{f"Q_{ch}": round(contribs[ch], 2) for ch in REWARD_CHANNELS},
                     })
-                st.dataframe(pd.DataFrame(rows), hide_index=True)
-                actions = {r["action"] for r in rows}
-                st.caption("All three agree." if len(actions) == 1
-                           else f"Agents disagree: {', '.join(sorted(actions))}.")
+            st.dataframe(pd.DataFrame(rows), hide_index=True)
+            visiting = [r for r in rows if r["visits?"] == "yes"]
+            acts = {r["action"] for r in visiting}
+            if len(visiting) <= 1:
+                st.caption("Only one agent passes through this cell on its path.")
+            elif len(acts) == 1:
+                st.caption(f"All visiting agents agree: {acts.pop()}.")
+            else:
+                st.caption(f"Agents diverge here: {', '.join(sorted(acts))}.")
 
 
 if __name__ == "__main__":

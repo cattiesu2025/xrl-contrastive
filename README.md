@@ -55,7 +55,13 @@ Three tabs (`streamlit run dashboard/app.py`):
   coins it has collected so far), plus a natural-language explanation naming the
   decisive channel for each.
 
-<!-- To add a screenshot: save one to assets/explore.png and reference it here. -->
+![Explore tab — clickable grid of the agents' paths](assets/explore1.png)
+
+Clicking cell **(2,9)** shows the contrast clearly: the **collector detours LEFT
+for a resource** (decisive channel = *coin*), while the navigator and balanced
+agents head straight **DOWN** to the goal.
+
+![Cell (2,9): per-agent decisions + natural-language explanation](assets/explore2.png)
 
 ## Project structure
 
